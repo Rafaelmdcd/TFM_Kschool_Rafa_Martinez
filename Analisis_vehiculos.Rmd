@@ -1,0 +1,128 @@
+---
+title: "Análisis_datos_personas_2008_2015"
+author: "Rafael Martínez de Castilla Díez"
+output: 
+  html_document:
+    fig_height: 5
+    fig_width: 7
+    number_sections: yes
+    theme: journal
+    toc: yes
+    toc_depth: 1
+    font-size: 16pt
+  pdf_document:
+    toc:yes
+  word_document: default
+---
+<br></br>
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## DATOS_VEHICULOS
+
+Una vez se han generado la vista en python con los datos de vehiculos implicados en los accidentes desde 2008 hasta 2015.
+
+En primer lugar incluyo las libreria que se utilizaran en el analisis, fijamos el directorio de trabajo, y hago una promera revision de los datos.
+
+### Librerias y carga de datos
+```{r Librerias}
+library(dummies)
+library(corrplot)
+library(plyr)
+library(dtplyr)
+library(data.table)
+library(ggplot2)
+library(gridExtra)
+library(sqldf)
+library(plotly)
+library(factoextra)
+library(Matrix)
+library(cluster)
+library(NbClust)
+
+#install.packages('factoextra',dependencies = TRUE, type="source")
+
+#Directorio de trabajo
+setwd("~/Documents/MASTER_DATA_SCIENCE/tfm/cleaned")
+
+vehiculos=read.csv2("view_vehic_08_15.csv",
+                     stringsAsFactors = FALSE,
+                     sep = ';',
+                     encoding = 'UTF-8',
+                     colClasses=c("ID_ACCIDENTE"="character"))
+
+#Revisión basica del dataset
+dim(vehiculos)
+str(vehiculos)
+summary(vehiculos)
+head(vehiculos)
+tail(vehiculos)
+
+```
+###ANALISIS
+
+Años de 2008 al 2015.
+
+Despues de agrupar el dataset, seleccionando turismos y motocicletas, y eliminar los resgistros con datos incorrectos, tales como año de matriculacion y mes de matriculacion =9999. Continuan apareciendo datos extraños, tales como matriculaciones del año 1900.
+
+    ANIO ANIO_MATRICULA        TIPO_VEHICULO NUM_ACC
+1   2008           1900          Motocicleta       1
+2   2008           1900 Turismo_sin_remolque       1
+3   2008           1939          Motocicleta       1
+138 2009           1900          Motocicleta       1
+139 2009           1944 Turismo_sin_remolque       1
+
+
+```{r}
+
+#selecciono lo campos para el analisis, no tengo en cuenta los registros con valores desconocidos para el año y mes de matriculacion
+
+vehic_acc<-sqldf("select  ANIO,
+                  ANIO_MATRICULA_VEHICULO as ANIO_MATRICULA,
+                  MES_MATRICULA_VEHICULO  as MES_MATRICULA,
+                  TIPO_VEHICULO,
+                  sum(NUMERO_OCUPANTES_VEH) as OCUPANTES,
+                  sum(1) as NUM_ACC
+                  from vehiculos
+                  where (TIPO_VEHICULO like '%urismo%' or TIPO_VEHICULO like '%otoc%')
+                  and ANIO_MATRICULA_VEHICULO <> 9999
+                  and MES_MATRICULA_VEHICULO <>99
+                  group by 
+                  ANIO,ID_ACCIDENTE,
+                  ANIO_MATRICULA_VEHICULO,
+                  MES_MATRICULA_VEHICULO,TIPO_VEHICULO
+                  order by ANIO,ANIO_MATRICULA_VEHICULO,MES_MATRICULA_VEHICULO")
+
+head(vehic_acc)
+vehic_acc$ANIO<- as.factor(vehic_acc$ANIO) 
+vehic_acc$TIPO_VEHICULO  <- as.factor(vehic_acc$TIPO_VEHICULO)
+
+sub_anio=sqldf("select ANIO,
+              ANIO_MATRICULA,
+              TIPO_VEHICULO,
+              sum (NUM_ACC) as NUM_ACC
+              from vehic_acc
+              group by anio,ANIO_MATRICULA,TIPO_VEHICULO")
+
+#Hago agrupaciones por rango de años
+sub_anio$GRP_EDAD <- cut(sub_anio$ANIO_MATRICULA, breaks = c(1900,1990,2000,2005,2010,2012,2015))
+
+str(sub_anio)
+sub_anio$ANIO<- as.factor(sub_anio$ANIO) 
+sub_anio$GRP_EDAD<- as.factor(sub_anio$GRP_EDAD) 
+sub_anio$TIPO_VEHICULO<- as.factor(sub_anio$TIPO_VEHICULO) 
+
+
+plot_ly(data = sub_anio, x = ~ANIO, y = ~NUM_ACC, color = ~GRP_EDAD,
+      text = ~paste("ANIO: ",ANIO, '<br>ACCIDENTES:', NUM_ACC)) %>%
+  layout(title = "ACCIDENTES POR ANTIGUEDAD 2008-2015")
+
+```
+### JUNTANDO DATASET DE VEHICULOS CON PERSONAS
+```{r}
+head(vehiculos)
+```
+

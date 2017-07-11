@@ -1,0 +1,675 @@
+---
+title: "Análisis_datos_Accidentes_2008_2015"
+author: "Rafael Martínez de Castilla Díez"
+output: 
+  html_document:
+    fig_height: 5
+    fig_width: 7
+    number_sections: yes
+    theme: journal
+    toc: yes
+    toc_depth: 1
+    font-size: 16pt
+  pdf_document:
+    toc:yes
+  word_document: default
+---
+<br></br>
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## DATOS_ACCIDENTES
+
+Una vez se han generado la vista en python con los datos de accidentes desde 2008 hasta 2015, procedo a analizar los datos relativos a los mismos.
+
+En primer lugar incluyo las libreria que se utilizaran en el analisis, fijamos el directorio de trabajo, y hago una promera revision de los datos.
+
+### Librerias y carga de datos
+```{r Librerias}
+library(dummies)
+library(corrplot)
+library(plyr)
+library(dtplyr)
+library(data.table)
+library(ggplot2)
+library(gridExtra)
+library(sqldf)
+library(plotly)
+library(factoextra)
+library(Matrix)
+library(partykit)
+
+#install.packages('factoextra',dependencies = TRUE, type="source")
+
+#Directorio de trabajo
+setwd("~/Documents/MASTER_DATA_SCIENCE/tfm/cleaned")
+
+accidentes=read.csv2("view_accvict_08_15.csv",
+                     stringsAsFactors = FALSE,
+                     sep = ';',
+                     encoding = 'UTF-8',
+                     colClasses=c("ID_ACCIDENTE"="character"))
+
+#transfomo en data table
+setDT(accidentes) 
+
+#Revisión basica del dataset
+dim(accidentes)
+str(accidentes)
+summary(accidentes)
+head(accidentes)
+tail(accidentes)
+
+```
+###ANALISIS
+
+Primeramente hago una clasificacion de los accidentes ocurridos en los años 2008-2015, clasificando por tipo de via.
+  
+```{r}
+clasif_acc<-sqldf("select ANIO,
+              ZONA_AGRUPADA,  
+              count (distinct ID_ACCIDENTE) as NUM_ACC,
+              sum(TOT_MUERTOS) as MUERTES,
+              sum(TOT_HERIDOS_GRAVES) as HERIDOS_GRAVES,
+              sum(TOT_HERIDOS_LEVES) as HERIDOS_LEVES
+              from accidentes
+              group by ANIO,ZONA_AGRUPADA
+              order by ANIO")
+clasif_acc
+```
+
+Comienzo a analizar para todos los años (2008-2015) las variables numericas relacionadas con las victimas:
+
+  * Numero total de victimas (incluye a victimas mortales, graves y leves)
+  * Vicitmas mortales.
+  * Heridos graves.
+  * Heridos leves.
+```{r}
+
+#Agrupacion por año y tipologia de victima
+acc<-sqldf("select ANIO,
+          sum(TOT_VICTIMAS) as VICTIMAS_TOTALES,
+          sum(TOT_MUERTOS) as MUERTOS,
+          sum(TOT_HERIDOS_GRAVES) as H_GRAVES,
+          sum(TOT_HERIDOS_LEVES) as H_LEVES
+          from accidentes group by ANIO
+          order by ANIO")
+
+#Convierto a formato largo
+acc_anio<-melt(acc,id=c("ANIO"))
+colnames(acc_anio)<-c('ANIO','TIPO','VALUE')
+acc_anio=sqldf("select * from acc_anio order by ANIO,TIPO")
+
+```
+
+Visualizando los datos de las tipologia por año, se parecian dos grupos y tendencias opuestas.
+
+   * El primero compuesto por las victimas totales y heridos leves.
+   * El segundo compuesto por muertos y heridos graves
+   
+```{r}
+
+#cc_anio$VALUE=scale(acc_anio$VALUE)
+
+p1<-ggplot(acc_anio, aes(x=ANIO, y=VALUE, colour=TIPO, group=TIPO)) +
+geom_line() +
+ggtitle("EVOLUCION POR TIPOLOGIA TODOS LOS AÑOS")+
+theme(plot.title = element_text(hjust = 0.5))+
+ylab("NUMERO_TOTAL")+
+ylab("NUMERO")
+
+
+p2<-ggplot(acc_anio, aes(x=ANIO, y=VALUE, colour=TIPO, group=TIPO)) +
+geom_line() +
+ggtitle("EVOLUCION POR TIPOLOGIA TODOS LOS AÑOS")+
+theme(plot.title = element_text(hjust = 0.5))+
+ylab("NUMERO_TOTAL")+
+ylab("NUMERO_escala LOG")+  scale_y_log10()
+
+grid.arrange(p1,p2, ncol=1)
+```
+```{r}
+p3<-ggplot(sqldf("select * from acc_anio where TIPO=='MUERTOS' or TIPO=='H_GRAVES'" ), aes(x=ANIO, y=VALUE, colour=TIPO, group=TIPO)) +
+    geom_line() +
+    ggtitle("GRP1_EVO_MUERTOS_Y_HERIDOS GRAVES")+
+    theme(plot.title = element_text(hjust = 0.5))+
+    ylab("NUMERO_TOTAL")+
+    ylab("NUMERO")
+
+p4<-ggplot(sqldf("select * from acc_anio where TIPO<>'MUERTOS' and TIPO<>'H_GRAVES'" ), aes(x=ANIO, y=VALUE, colour=TIPO, group=TIPO)) +
+    geom_line() +
+    ggtitle("GRP2_EVO_DE_VICTIMAS_Y_HERIDOS_LEVES")+
+    theme(plot.title = element_text(hjust = 0.5))+
+    ylab("NUMERO_TOTAL")+
+    ylab("NUMERO")
+
+# ggplot(acc_anio, aes(ANIO, MUERTOS)) + geom_line() 
+# + xlab("ANIO") + ylab("VICTIMAS")
+
+grid.arrange(p3,p4, ncol=1)
+```
+Se observa que el numero de victimas en tiene una tendencia positiva, esta tendencia va pareja al incremento de heridos leves.
+
+En cambio vemos que la tendencia de muertes y heridos graves es negativa.
+
+En 8 años se han incrementado las victimas, pero se ha reducido el numero de muertes.
+
+Para comprobar esta posible depenencia, creo una matriz de correlacion entre las distintas variables.
+
+-En primer lugar incluyendo todos los años desde 2008 al 2015.
+
+   1. Se aprecian la siguientes CORRELACIONES DIRECTAS:
+            
+  * 0.91 Entre heridos leves y victimas. El numero de heridos leves está casi a la                        misma proporcion que de accidentados.
+            
+  * 0.13 Entre heridos graves y victimas.
+          
+  * 0.07 Entre muertos y victimas. El aumento en el nuevo de victimas no tiene                            demasiado impacto en el aumento de numero de muertos.
+
+  2. Se aprecian las siguentes CORRELACIONES INDIRECTAS:
+    
+  * -0.11 Entre heridos leves y muertos. 
+            
+  * -0.26 Entre heridos graves y heridos leves.
+  
+  Logicamente, si aumenta el numero de muertos o heridos graves, diminuye el numero de heridos     leves, y viceversa.
+
+```{r df mc_all_years}
+acc_subset <- subset(accidentes,select=c(TOT_VICTIMAS,TOT_MUERTOS,TOT_HERIDOS_GRAVES,
+                               TOT_HERIDOS_LEVES))
+
+#creo la matriz de correlacion
+acc_subset_cor<- cor(acc_subset)
+#nombre en ejes
+colnames(acc_subset_cor)<-c("VICTMS","MUERTOS","H_GRVS","H_LVS")
+rownames(acc_subset_cor)<-c("VICTMS","MUERTOS","H_GRVS","H_LVS")
+#paleta de colores
+col <- colorRampPalette(c("#BB4444", "#EE9988", "#FFFFFF", "#77AADD", "#4477AA"))
+#ploteo
+corrplot(acc_subset_cor, method="color",
+             hclust.method="median",
+             addCoef.col = "black",
+             col=col(200),
+             order ="hclust",
+             title ="MATRIZ DE CORRELACIÓN 2008-2015",
+             number.cex=.75,
+             tl.cex = .75,
+             mar = c(1,0,1,0),type="lower")
+
+```
+
+Genero matrices de correlacion para cada uno de los años
+
+Se mantienen las correlacion entre las variable antes comentadas. Se puede apreciar en las correlaciones entre el numero de victimas y el resto de variables:
+
+  * Con el numero de muertos va disminuyendo desde 2008 a 2015, salvo incremento en 2014.
+  
+  * Con el numero de heridos leves, se mantiene cuasi lineal.
+  
+  * Con el numero de heridos graves, disminute desde 2008 a 2015, salvo incremento en 2014.
+
+
+```{r df mc_per_year}
+colnames(accidentes)
+
+acc_subset<- subset(accidentes,select=c(TOT_VICTIMAS,TOT_MUERTOS,TOT_HERIDOS_GRAVES,
+                              TOT_HERIDOS_LEVES))
+#Quiero plotear los añosa 2x2
+par(mfrow=c(2,2))
+col <- colorRampPalette(c("#BB4444", "#EE9988", "#FFFFFF", "#77AADD", "#4477AA"))
+years=.(2008,2009,2010,2011,2012,2013,2014,2015)
+
+for (year in names(years)) {
+    acc_subset <- subset(accidentes,(ANIO==year),
+                     select=c(TOT_VICTIMAS,TOT_MUERTOS,TOT_HERIDOS_GRAVES,
+                              TOT_HERIDOS_LEVES))
+    acc_subset_cor<- cor(acc_subset)
+    colnames(acc_subset_cor)<-c("VICTMS","MUERTOS","H_GRVS","H_LVS")
+    rownames(acc_subset_cor)<-c("VICTMS","MUERTOS","H_GRVS","H_LVS")
+
+    corrplot(acc_subset_cor, method="color",
+             hclust.method="median",
+             addCoef.col = "black",
+             col=col(200),
+             order ="hclust",
+             title =year,
+             number.cex=.75,
+             tl.cex = .75,
+             mar = c(1,0,1,0),type="lower")
+}
+
+
+```
+#### REGRESIONES
+Precedo a analizar mediante regresion lineal la realcion antes comentada entre heridos leves y victimas totales
+
+```{r}
+reg<-lm(VICTIMAS_TOTALES~H_LEVES,data = acc)
+plot(VICTIMAS_TOTALES~H_LEVES,data = acc)
+summary(reg)
+anova(reg)
+```
+
+El R cuadrado nos indica que aproximadamente el 81,68% de la variabilidad en la variable VICTIMAS_TOTALES es explicada por los HERIDOS_LEVES.
+
+Analizando la varianza, teniendo un alfa de 0,4 y siendo p=0.00207. Podemos decir que existe relacion lineal.
+
+
+#### GRAFICOS SOBRE EL NUMERO DE VICTIMAS Y TIPOLOGIA
+
+Voy a comprobar el % de cada tipo de herido sobre el total y representarlo mediante histograma.
+
+Hay un total de 1.010.892 victimas en 8 años, de las cuales:
+
+  * MUERTES son	15.092, que representan un 9,45% sobre el total.
+  * HERIDOS_GRAVES son	95.535, que representan un 1,49% sobre el total.
+  * HERIDOS_GRAVES son	900.265, que representan un 89,06% sobre el total.
+
+     TIPO     TOTAL_VICTIMAS    PORC
+     MUERTOS           15092    1.49
+     H_GRAVES          95535    9.45
+     H_LEVES          900265    89.06
+     
+```{r}
+#Agrupacion por tipo desde 2008 a 2015
+tipos_victimas<- ddply(subset(acc_anio, TIPO!="VICTIMAS_TOTALES"), .(TIPO),
+                      summarize,TOTAL_VICTIMAS= sum(VALUE))
+
+#Total de victimas desde 2008 a 2015
+total_victimas<-sqldf("select sum(VALUE) as TOTAL from acc_anio where tipo=='VICTIMAS_TOTALES'")
+
+#Calculo en % de cada tipologia sobre el total
+tipos_victimas$PORC=round((tipos_victimas$TOTAL_VICTIMAS/total_victimas$TOTAL)*100,2)
+
+#Histograma 1
+ggplot(tipos_victimas,
+  aes(x = TIPO, y = TOTAL_VICTIMAS,fill=TIPO)) +
+  ggtitle("TOTAL DE VICTIMAS Y % SOBRE EL TOTAL 2008-2015")+
+  theme(plot.title = element_text(hjust = 0.5))+
+  geom_bar(stat="identity") +
+  labs(x = "TIPO_VICTIMA", y = "NUM_VICTIMAS - % SOBRE TOTAL", fill = "TIPOLOGIAS")+
+  scale_y_continuous(limits = c(0,1000000))+
+  geom_text(data=tipos_victimas, aes(label=format(PORC, digits=3), y=PORC),
+  colour="black",size=3.5,vjust=-8)+
+ geom_text(data=tipos_victimas, aes(label=format(TOTAL_VICTIMAS, digits=6), y=TOTAL_VICTIMAS),
+  colour="black",size=3.5,vjust=-2)
+
+```
+
+A continuacion vemos en 3D, el detalle de la evolucion por año, y peso de cada tipologia sobre el total de accidentes.
+
+```{r}
+#Genero la tabla por año y tipo
+tipos_victimas_anio<- ddply(subset(acc_anio, TIPO!="VICTIMAS_TOTALES"), .(ANIO,TIPO),
+                      summarize,TOTAL_VICTIMAS= sum(VALUE))
+
+#Calculo en % de cada tipo sobre el total
+
+tipos_victimas_anio$PORC=round((tipos_victimas_anio$TOTAL_VICTIMAS/total_victimas$TOTAL)*100,2)
+
+plot_ly(tipos_victimas_anio, x = ~ANIO, y = ~TIPO, z = ~PORC,
+             marker = list(color = ~TOTAL_VICTIMAS,
+                           colorscale = c('#FFE1A1', '#683531'), 
+                           showscale = TRUE)) %>%
+  add_markers() %>%
+  layout(scene = list(xaxis = list(title = 'ANIO'),
+                      yaxis = list(title = 'TIPO'),
+                      zaxis = list(title = '% S.TOTAL')),
+         annotations = list(
+           x = 1.13,
+           y = 1.05,
+           text = 'VICTIMAS',
+           xref = 'TIPOLOGIA',
+           yref = '% S.TOTAL',
+           showarrow = FALSE
+         ))
+
+```
+#### TRABAJANDO CON LAS CIFRAS DEL NUMERO DE ACCIDENTES POR MES
+
+Por meses: Vemos de nuevo que los años con mayor siniestralidad son 2015,2014 y 2008. El mas con   mayor siniestrlidad y victimas es Julio. En 2015 se aprecia un notable incremento en los meses   de Mayo a Julio.
+  2011 y 2012 son los años con numero de accidentes y victimas.
+  
+Por dias: El dia con mayor siniestralidad y mayor numero de victimas, es el Viernes, y con menor, el Domingo. 2015 es el año que tiene el top de ambos indicadores 5 de 7 dias.
+
+
+```{r}
+
+#Agrupacion por año y tipologia de victima
+acc_anio_mes<-sqldf("select ANIO,
+          MES,
+          count(distinct ID_ACCIDENTE) as NUM_ACC,
+          sum(TOT_VICTIMAS) as VICTIMAS
+          from accidentes 
+          group by ANIO,MES
+          order by ANIO")
+
+
+acc_anio_dia<-sqldf("select ANIO,
+          DIASEMANA as DIA,
+          count(distinct ID_ACCIDENTE) as NUM_ACC,
+          sum(TOT_VICTIMAS) as VICTIMAS
+          from accidentes 
+          group by ANIO,DIASEMANA
+          order by ANIO")
+
+#Convierto a formato largo
+#acc_anio_ccaa<-melt(acc_anio_ccaa,id=c("ANIO","MES","DIASEMANA","NUM_ACC"))
+#colnames(acc_anio_ccaa)<-c('ANIO','MES','NUM_ACC','TIPOLOGIA','VICTIMAS')
+#acc_anio_ccaa=sqldf("select * from acc_anio_ccaa order by ANIO,CC_AA,TIPO")
+#Convierto a factores y ordeno los meses
+acc_anio_mes$ANIO  <- as.factor(acc_anio_mes$ANIO)
+acc_anio_mes$MES  <- as.factor(acc_anio_mes$MES)
+acc_anio_mes$MES <- ordered(acc_anio_mes$MES, 
+                    c("ENERO","FEBRERO","MARZO","ABRIL","MAYO",
+                      "JUNIO","JULIO", "AGOSTO", "SEPTIEMBRE",
+                      "OCTUBRE", "NOVIEMBRE", "DICIEMBRE"))
+
+acc_anio_dia$ANIO  <- as.factor(acc_anio_dia$ANIO)
+acc_anio_dia$DIA  <- as.factor(acc_anio_dia$DIA)
+acc_anio_dia$DIA <- ordered(acc_anio_dia$DIA, 
+                  c("LUNES","MARTES","MIERCOLES","JUEVES","VIERNES",
+                      "SABADO","DOMINGO" ))
+
+#Scatter
+# plot_ly(data = acc_anio_ccaa, x = ~MES, y = ~NUM_ACC, color = ~ANIO,type = "scatter",
+#         text = ~paste("ANIO: ",ANIO, '<br>ACCIDENTES:', NUM_ACC))
+#Histograma
+p1=plot_ly(data = acc_anio_mes, x = ~MES, y = ~NUM_ACC, color = ~ANIO,
+        text = ~paste("ANIO: ",ANIO, '<br>ACCIDENTES:', NUM_ACC)) %>%
+  layout(title = "ACCIDENTES POR MESES 2008-2015")
+
+
+p2=plot_ly(data = acc_anio_mes, x = ~MES, y = ~VICTIMAS, color = ~ANIO,
+        text = ~paste("ANIO: ",ANIO, '<br>ACCIDENTES:', VICTIMAS)) %>%
+  layout(title = "VICTIMAS POR DIAS 2008-2015")
+
+p3=plot_ly(data = acc_anio_dia, x = ~DIA, y = ~NUM_ACC, color = ~ANIO,
+        text = ~paste("ANIO: ",ANIO, '<br>ACCIDENTES:', NUM_ACC)) %>%
+  layout(title = "ACCIDENTES POR DIAS 2008-2015")
+
+p4=plot_ly(data = acc_anio_dia, x = ~DIA, y = ~VICTIMAS, color = ~ANIO,
+        text = ~paste("ANIO: ",ANIO, '<br>ACCIDENTES:', VICTIMAS)) %>%
+  layout(title = "VICTIMAS POR DIAS 2008-2015")
+
+p1
+p2
+p3
+p4
+
+```
+#### TRABAJANDO CON LAS CIFRAS DEL NUMERO DE ACCIDENTES Y VICTIMAS POR CCAA
+
+En cuanto al numero de accidentes y victimas por CCAA, Cataluña es la CCAA con mas accidentes, seguidas de Madrid y Andalucia.
+
+En cuanto a menos siniestralidad se encuentran Navarra, Ceuta y Melilla Y la Rioja.
+
+```{r}
+
+#Agrupacion por año y tipologia de victima
+acc_anio_ccaa<-sqldf("select ANIO,
+          COMUNIDAD_AUTONOMA as CCAA,
+          count(distinct ID_ACCIDENTE) as NUM_ACC,
+          sum(TOT_VICTIMAS) as VICTIMAS
+          from accidentes 
+          group by ANIO,COMUNIDAD_AUTONOMA
+          order by NUM_ACC desc")
+
+#Convierto a formato largo
+#acc_anio_ccaa<-melt(acc_anio_ccaa,id=c("ANIO","MES","DIASEMANA","NUM_ACC"))
+#colnames(acc_anio_ccaa)<-c('ANIO','MES','NUM_ACC','TIPOLOGIA','VICTIMAS')
+#acc_anio_ccaa=sqldf("select * from acc_anio_ccaa order by ANIO,CC_AA,TIPO")
+#Convierto a factores y ordeno los meses
+acc_anio_ccaa$ANIO  <- as.factor(acc_anio_ccaa$ANIO)
+acc_anio_ccaa$CCAA  <- as.factor(acc_anio_ccaa$CCAA)
+
+#Scatter
+# plot_ly(data = acc_anio_ccaa, x = ~MES, y = ~NUM_ACC, color = ~ANIO,type = "scatter",
+#         text = ~paste("ANIO: ",ANIO, '<br>ACCIDENTES:', NUM_ACC))
+#Histograma
+p1<-plot_ly(data = acc_anio_ccaa, x = ~ANIO, y = ~NUM_ACC, color = ~CCAA,type = "scatter",
+        text = ~paste("CCAA: ",CCAA, '<br>ACCIDENTES:', NUM_ACC))
+#%>%  layout(title = "ACCIDENTES POR CCAA 2008-2015")
+
+p2<-plot_ly(data = acc_anio_ccaa, x = ~ANIO, y = ~VICTIMAS, color = ~CCAA,type = "scatter",
+        text = ~paste("CCAA: ",CCAA, '<br>ACCIDENTES:', VICTIMAS)) 
+#%>%  layout(title = "VICTIMAS POR CCAA 2008-2015")
+
+p<-subplot(p1, p2,margin = 0.05)
+p %>% layout(annotations = list(
+ list(x = 0.05 , y = 1.05, text = "ACCIDENTES POR CCAA", showarrow = F, xref='paper', yref='paper'),
+  list(x =0.95, y = 1.05, text = "VICTIMAS POR CCAA", showarrow = F, xref='paper', yref='paper'))
+)
+
+```
+A continuacion, examino 3 variables importantes a la hora de producirse una accidente:
+
+  * Tipo de calzada
+  * Condiciones luminicas
+  * Condiciones climatologicas
+  
+Se puede ver que el groso de accidentes se produce con un asfalto seco y limpio, a pleno dia y con buen tiempo.
+
+```{r}
+
+
+#Agrupacion por año y tipologia de victima
+acc_anio_calzada<-sqldf("select ANIO,
+          SUPERFICIE_CALZADA as CALZADA,
+          count (SUPERFICIE_CALZADA) as NUM_CALZADA
+          from accidentes 
+          group by ANIO,SUPERFICIE_CALZADA
+          order by ANIO")
+
+acc_anio_luminosidad<-sqldf("select ANIO,
+          LUMINOSIDAD,
+          count (LUMINOSIDAD)  as NUM_LUMINOSIDAD
+          from accidentes 
+          group by ANIO,LUMINOSIDAD
+          order by ANIO")
+
+acc_anio_clima<-sqldf("select ANIO,
+          FACTORES_ATMOSFERICOS as CLIMA,
+          count (FACTORES_ATMOSFERICOS)  as NUM_CLIMA
+          from accidentes 
+          group by ANIO,FACTORES_ATMOSFERICOS
+          order by ANIO")
+
+
+acc_anio_calzada$ANIO  <- as.factor(acc_anio_calzada$ANIO)
+acc_anio_luminosidad$ANIO  <- as.factor(acc_anio_luminosidad$ANIO)
+acc_anio_clima$ANIO  <- as.factor(acc_anio_clima$ANIO)
+
+#Histograma tipo de calzada
+p1=plot_ly(data = acc_anio_calzada, x = ~CALZADA, y = ~NUM_CALZADA, color = ~ANIO,
+        text = ~paste("ANIO: ",ANIO, '<br>ACCIDENTES:', NUM_CALZADA)) %>%
+  layout(title = "ACCIDENTES TIPO DE CALZADA 2008-2015")
+
+#Histograma factores lumincos
+p2=plot_ly(data = acc_anio_luminosidad, x = ~LUMINOSIDAD, y = ~NUM_LUMINOSIDAD, color = ~ANIO,
+        text = ~paste("ANIO: ",ANIO, '<br>ACCIDENTES:', NUM_LUMINOSIDAD)) %>%
+  layout(title = "ACCIDENTES LUMINOSIDAD 2008-2015")
+
+#Histograma climatologia
+p3=plot_ly(data = acc_anio_clima, x = ~CLIMA, y = ~NUM_CLIMA, color = ~ANIO,
+        text = ~paste("ANIO: ",ANIO, '<br>ACCIDENTES:', NUM_CLIMA)) %>%
+  layout(title = "ACCIDENTES POR CLIMATOLOGIA 2008-2015")
+
+p1
+p2
+p3
+
+
+```
+#### ARBOL DE CLASIFICACION
+
+Voy a intentar identificar que factores influyen mas en que haya muerte o no en un accidente. Para ello, utilizo un arbol de clasificacion.
+
+En primer lugar identifico del data set de accidentes, que registro han tenido muertes, creando una nueva columna TARGET que contendra valores "S" o "N".
+
+El resto de variables que intervendran en el arbol, las convierto a factores.
+
+Teniendo el cuenta las variables:
+
+  * ZONA_AGRUPADA
+  * SUPERFICIE_CALZADA
+  * FACTORES_ATMOSFERICOS
+
+Se obtiene como resultado que la tipologia de accidente del cluster 12, tiene la mayor probabilidad de muerte:
+  TIPO DE VIDA-->VIAS INTERURBANAS
+  FACTORES_ATMOSFERICOS-->NIEBLA_INTENSA
+  SUPERFICIE_CALZADA-->GRAVILLA SUELTA, OTRO TIPO, SECA_Y_LIMPIA, UMBRIA
+  
+```{r}
+#Creo la varible objetivo, en este caso identifica que accidentes han tenido muertes
+accidentes$target <- as.numeric(accidentes$TOT_MUERTOS > 0)
+accidentes$target[accidentes$TOT_MUERTOS > 0]="S"
+accidentes$target[accidentes$TOT_MUERTOS == 0]="N"
+accidentes$target <- as.factor(accidentes$target)
+
+#Convierto en factores las variables que voy a utilizar en el arbol
+accidentes$ZONA <- as.factor(accidentes$ZONA)
+accidentes$ZONA_AGRUPADA <- as.factor(accidentes$ZONA_AGRUPADA)
+accidentes$RED_CARRETERA <- as.factor(accidentes$RED_CARRETERA)
+accidentes$TIPO_VIA <- as.factor(accidentes$TIPO_VIA)
+accidentes$SUPERFICIE_CALZADA <- as.factor(accidentes$SUPERFICIE_CALZADA)
+accidentes$LUMINOSIDAD <- as.factor(accidentes$LUMINOSIDAD)
+accidentes$FACTORES_ATMOSFERICOS <- as.factor(accidentes$FACTORES_ATMOSFERICOS)
+accidentes$VISIBILIDAD_RESTRINGIDA <- as.factor(accidentes$VISIBILIDAD_RESTRINGIDA)
+
+#Genero el arbol
+tree <- ctree(target ~ 
+                  #ZONA+
+                  ZONA_AGRUPADA + 
+                  #RED_CARRETERA +
+                  #TIPO_VIA +
+                  SUPERFICIE_CALZADA +
+                  #LUMINOSIDAD  
+                  FACTORES_ATMOSFERICOS 
+                  #VISIBILIDAD_RESTRINGIDA 
+                , 
+                data = accidentes
+)
+ 
+#ploteado simple
+#plot(tree,gp = gpar(fontsize = 4),abbreviate = TRUE)
+#plot(as.simpleparty(tree),gp = gpar(fontsize = 4))
+```
+El resultado es un arbol con 11 nodos internos y 12 terminales
+```{r}
+#Resultado del arbol
+tree
+```
+```{r}
+#Para ver los resultado con mas claridad, calculo la probabilida de tener muerte o no, dependiendo de las variables que he incluido en el arbol
+
+#Calculo la probabilidad
+prob=aggregate(predict(tree, type = "prob"),
+                  list(predict(tree, type = "node")), FUN = mean)
+```
+
+Ahora se ve mejor la probalidad de "S" o "N" en cada nodo terminal
+
+```{r}
+prob[order(prob$S,decreasing = TRUE),]
+```
+```{r}
+#Modifico los nodos del arbol con la probabilidad calculada
+tree_node <- as.list(tree$node)
+for(i in 1:nrow(prob)) {
+  tree_node[[prob[i,1]]]$info$prediction <- paste(
+    format(names(prob)[-1]),
+    format(round(prob[i, -1], digits = 3), nsmall = 3)
+  )
+}
+tree$node <- as.partynode(tree_node)
+
+#Ploteo el arbol
+plot(tree,
+     terminal_panel = node_terminal,
+     gp = gpar(fontsize = 6),
+     tp_args = list(FUN = function(node) c("PROB_MUERTE", node$prediction))
+     )
+```
+
+Si ejecuto el arbol con todas las variables y ordeno descendentemente por probabilidad de muerte, se ve que el grupo 105 tiene una probabilida de mas del 40%. 
+
+    FACTORES_ATMOSFERICOS --> LLOVIZNANDO, LLUVIA_FUERTE, NIEBLA_INTENSA, NIEBLA_LIGERA, VIENTO FUERTE
+    RED_CARRETERA --> OTRAS_TITULARIDADES, TITULARIDAD_PROVINCIAL
+    VISIBILIDAD_RESTRINGIDA --> 5:'DESLUMBRAMIENTO', 7:'OTRA_CAUSA'
+    LUMINOSIDAD --> CREPUSCULO, NOCHE_ILUMINACION_INSUFICIENTE, NOCHE: SIN ILUMINACION
+    SUPERFICIE_CALZADA --> SECA_Y_LIMPIA, UMBRIA
+      
+
+Seguida de 5 cluster mas con mas de un 20%.
+
+   Group.1         N            S
+51     105 0.5714286 0.4285714286
+76     153 0.6666667 0.3333333333
+56     112 0.7454545 0.2545454545
+46      94 0.7567568 0.2432432432
+6       19 0.7777778 0.2222222222
+52     106 0.7877358 0.2122641509
+
+```{r}
+#Genero el arbol con todas las variables
+tree <- ctree(target ~ 
+                  #ZONA+
+                  ZONA_AGRUPADA + 
+                  RED_CARRETERA +
+                  TIPO_VIA +
+                  SUPERFICIE_CALZADA +
+                  LUMINOSIDAD  +
+                  FACTORES_ATMOSFERICOS +
+                  VISIBILIDAD_RESTRINGIDA 
+                , 
+                data = accidentes
+)
+ 
+#ploteado simple
+#plot(tree,gp = gpar(fontsize = 4),abbreviate = TRUE)
+#plot(as.simpleparty(tree),gp = gpar(fontsize = 4))
+
+#Resultado del arbol
+tree
+
+#Para ver los resultado con mas claridad, calculo la probabilida de tener muerte o no, dependiendo de las variables
+#que he incluido en el arbol
+
+#Calculo la probabilidad
+prob=aggregate(predict(tree, type = "prob"),
+                  list(predict(tree, type = "node")), FUN = mean)
+```
+
+Nodo ordenado por probabilidad de muerte
+
+```{r}
+prob[order(prob$S,decreasing = TRUE),]
+```
+
+```{r}
+#Modifico los nodos del arbol con la probabilidad calculada
+tree_node <- as.list(tree$node)
+
+for(i in 1:nrow(prob)) {
+  tree_node[[prob[i,1]]]$info$prediction <- paste(
+    format(names(prob)[-1]),
+    format(round(prob[i, -1], digits = 3), nsmall = 3)
+  )
+}
+tree$node <- as.partynode(tree_node)
+
+#Ploteo el arbol
+plot(tree,
+     terminal_panel = node_terminal,
+     gp = gpar(fontsize = 6),
+     tp_args = list(FUN = function(node) c("PROB_MUERTE", node$prediction))
+     )
+
+```
+
+
+

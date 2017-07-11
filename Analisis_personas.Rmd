@@ -1,0 +1,314 @@
+---
+title: "Análisis_datos_personas_2008_2015"
+author: "Rafael Martínez de Castilla Díez"
+output: 
+  html_document:
+    fig_height: 5
+    fig_width: 7
+    number_sections: yes
+    theme: journal
+    toc: yes
+    toc_depth: 1
+    font-size: 16pt
+  pdf_document:
+    toc:yes
+  word_document: default
+---
+<br></br>
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## DATOS_PERSONAS
+
+Una vez se han generado la vista en python con los datos de accidentes desde 2008 hasta 2015, procedo a analizar los datos relativos a los mismos.
+
+En primer lugar incluyo las libreria que se utilizaran en el analisis, fijamos el directorio de trabajo, y hago una promera revision de los datos.
+
+### Librerias y carga de datos
+```{r Librerias}
+library(dummies)
+library(corrplot)
+library(plyr)
+library(dtplyr)
+library(data.table)
+library(ggplot2)
+library(gridExtra)
+library(sqldf)
+library(plotly)
+library(factoextra)
+library(Matrix)
+library(cluster)
+library(NbClust)
+
+#install.packages('factoextra',dependencies = TRUE, type="source")
+
+#Directorio de trabajo
+setwd("~/Documents/MASTER_DATA_SCIENCE/tfm/cleaned")
+
+personas=read.csv2("view_pers_08_15.csv",
+                     stringsAsFactors = FALSE,
+                     sep = ';',
+                     encoding = 'UTF-8',
+                     colClasses=c("ID_ACCIDENTE"="character"))
+
+#Revisión basica del dataset
+dim(personas)
+str(personas)
+summary(personas)
+head(personas)
+tail(personas)
+
+```
+###ANALISIS
+
+Años de 2008 al 2015.
+
+Analizando los datos de los conductores con siniestros.
+
+Agrupacion por año y tipologia conductor (ID_PERSONA=='CONDUCTOR') y elimino los registros con codificacion erronea o desconocida en el campo sexo.
+
+Se puede ver que para todos los años :
+
+  * En el grafico 1, que los hombres tienen una siniestralidad mas alta que la mujeres.
+  * En el grafico 2, que el rango de edad entre 30-40 es que que mas siniestralidad tiene.
+
+
+```{r}
+
+pers_acc<-sqldf("select ANIO,
+          COD_SEXO as SEXO,
+          EDAD,
+          count (distinct ID_ACCIDENTE) as NUM_ACC
+          from personas
+          where ID_PERSONA=='CONDUCTOR'
+          and COD_SEXO not in ('SIN ESPECIFICAR','999')
+          and ANIO_PERMISO <>9999
+          and EDAD between 18 and 90
+          group by ANIO,SEXO,EDAD")
+
+
+pers_acc$ANIO  <- as.factor(pers_acc$ANIO) 
+pers_acc$SEXO  <- as.factor(pers_acc$SEXO)
+
+#Grafico año-sexo-edad-num_acc
+# plot_ly(pers_acc, x = ~ANIO, y = ~SEXO, z = ~NUM_ACC,
+#              marker = list(color = ~EDAD,
+#                            colorscale = c('#FFE1A1', '#683531'), 
+#                            showscale = TRUE)) %>%
+#   add_markers() %>%
+#   layout(scene = list(xaxis = list(title = 'ANIO'),
+#                       yaxis = list(title = 'SEXO'),
+#                       zaxis = list(title = 'NUM_ACC')),
+#          annotations = list(
+#            x = 1.13,
+#            y = 1.05,
+#            text = 'Nº ACCIDENTES POR SEXO-EDAD',
+#            xref = 'ANIO',
+#            yref = 'SEXO',
+#            showarrow = FALSE
+#          ))
+
+plot_ly(data = pers_acc, x = ~SEXO, y = ~NUM_ACC, color = ~ANIO,
+      text = ~paste("ANIO: ",ANIO, '<br>ACCIDENTES:', NUM_ACC)) %>%
+  layout(title = "ACCIDENTES POR SEXO_CONDUCTOR 2008-2015")
+
+plot_ly(data = pers_acc, x = ~EDAD, y = ~NUM_ACC, color = ~ANIO,
+      text = ~paste("ANIO: ",ANIO, '<br>ACCIDENTES:', NUM_ACC)) %>%
+  layout(title = "ACCIDENTES POR EDAD_CONDUCTOR 2008-2015")
+```
+
+###CLUSTERING
+```{r}
+
+pers<-sqldf("select ANIO,
+          EDAD,
+          COD_SEXO as SEXO,
+          ANIO_PERMISO,
+          INFRACC_VELOCIDAD
+          from personas
+          where ID_PERSONA==1 and sexo not in ('X','999') and ANIO_PERMISO <>9999
+          group by ANIO,EDAD,COD_SEXO,ANIO_PERMISO,INFRACC_VELOCIDAD")
+
+#Codifico los datos de velocidad
+
+pers$INFRACC_VELOCIDAD[pers$INFRACC_VELOCIDAD == 0] <- "SIN_DATO"
+pers$INFRACC_VELOCIDAD[pers$INFRACC_VELOCIDAD == 1] <- "VEL_INADEC"
+pers$INFRACC_VELOCIDAD[pers$INFRACC_VELOCIDAD == 2] <- "EXCESO"
+pers$INFRACC_VELOCIDAD[pers$INFRACC_VELOCIDAD == 3] <- "LENTO"
+pers$INFRACC_VELOCIDAD[pers$INFRACC_VELOCIDAD == 4] <- "NINGUNA"
+pers$INFRACC_VELOCIDAD[pers$INFRACC_VELOCIDAD == 5] <- "DESCONOCIDA"
+
+
+#Convierto los datos categoricos en variables dummies
+
+pers_subset_dummies=dummy.data.frame(pers,dummy.class="character")
+colnames(pers_subset_dummies)=gsub("SEXO", "", colnames(pers_subset_dummies))
+colnames(pers_subset_dummies)=gsub("INFRACC_VELOCIDAD", "", colnames(pers_subset_dummies))
+
+```
+
+Vemos que hay edades de conductores con edades incorrectas <18 y >90, elimino esos registros.
+
+```{r}
+unique(pers)
+#Elimino los registros comentados
+pers_subset_dummies<- subset(pers_subset_dummies,(EDAD>17 & EDAD<91))
+```
+
+Hago el metodo del codo para los tres tipos de cluster y todos los años.
+
+Como muestra solo ejecuto para el 2008
+```{r METODOS DE CODO}
+
+#Para agilizar el procedimiento divido el dataset en años
+#Selecciono el año a tratar, en este caso 2008
+year=2014
+pers_subset<- subset(pers_subset_dummies,ANIO==year)
+#No necesito la variable año
+pers_subset$ANIO=NULL
+
+#Metodo del codo KMEANS
+fviz_nbclust(pers_subset, kmeans, method = "wss") +
+    geom_vline(xintercept = 3, linetype = 2)
+#Metodo del codo HCLUST
+fviz_nbclust(pers_subset, hcut, method = "wss",k.max=20,
+             hc_method = "complete")
+```
+
+Tanto en el metodo del codo de KMEANS, como en el de HCLUST (cluster jerarquico), se indica seleccionar 3 cluters para todos los años desde 2008 a 2015
+
+```{r SETINGS}
+#Defino el numero de clusters
+NUM_CLUSTERS=3
+set.seed(1234)
+#Normalizo los datos
+pers_subset_scl=scale(pers_subset)
+#Hay columnas con datos a 0, al normalizar salen NA. Lo vuelvo a poner a 0
+pers_subset_scl[is.na(pers_subset_scl)] <- 0
+```
+
+Al clusterizar todos los años, siempre se repite el patron de dos cluster de hombre y uno de mujeres donde varia la peternencia a cada uno de los grupos de infracciones.
+
+Analizando el AÑO 2008
+
+
+  Se pueden distiguir los siguientes agrupaciones por cada tipo de modelo
+  
+  KMEANS:
+  
+    * El cluster 1 agrupa a hombres de 42 de media de edad y media del carne de 1996, cuyos            accidentes tenian mas relacion con el exceso de velocidad o una velocidad inadecuada para        el tipo de via.
+        
+    * El cluster 2 agrupa a hombres 66 años de media de edad y media del carne de 1977, en su          mayoria no cometieron infraccion de velocidad (NINGUNA), este grupo de hombre tiene la           media de EXCESO, sensiblemente menor que el grupo 1.
+    
+    * El cluster 3 agrupa a mujeres de 46 años de media y media del carne de 1992, no se aprecia       un nivel muy alto en la columnas de infraccion, si en cambio bajo en exceso de velocidad.
+  
+  KMEDOIDS:
+  
+    Minimiza la distancia absoluta entre puntos y el centroide seleccionado, minimiza el cuadrado     de la distancia, el resultado es mas menos sensible al ruido y los outliers.
+  
+    * El cluster 1 agrupa a mujeres de 46 de media de edad y media del carne de 1992 (grupo 3 en       KMEANS), se incluyen dentro del grupo de no infraccion de velocidad.
+    
+    * El cluster 2 agrupa a hombres y mujeres en relacion 80%-20% respectivamentes, de 45              años de media de edad y media del carne de 1993, se desconoce si esos accidentes                 conllevaron infraccion de velocidad.
+    
+    * El cluster 3 agrupa a hombres de 59 años de media y media del carne de 1983, tambien con         ningun tipo de infraccion en cuanto a la velocidad, com el grupo 1. 
+    
+  HCLUST:
+  
+    No distingue tan claramente entre hombres y mujeres como los modelos anteriores, pero tambien     diferencia dos grupos con predominancia de hombres (cluster 1 y 2). Y el 3 casi el 50%.
+    
+    * El Cluster 1, se lleva todo el peso en cuanto a infracciones por exceso, velocidad               adecuada, o ninguna infraccion.
+    * El cluster 2 acumula al 80% de hombres y 20% de mujeres con infracciones por defecto de          velocidad
+    
+###CLUSTERING
+```{r MODELOS CLUSTER}
+
+#KMEANS
+Modelo_kmeans=kmeans(pers_subset_scl,NUM_CLUSTERS)
+pers_subset$Segmentos_kmeans=Modelo_kmeans$cluster
+
+#KMEDOIDS
+Modelo_kmedoids=pam(pers_subset_scl,NUM_CLUSTERS)
+pers_subset$Segmentos_kmdeoids=Modelo_kmedoids$cluster
+
+#HCLUST
+distancia <- dist(pers_subset_scl, method = "euclidean")
+Modelo_hclust<- hclust(distancia, method = "complete")
+pers_subset$Segmentos_hclust = cutree(Modelo_hclust, k = NUM_CLUSTERS)
+plot(Modelo_hclust)
+
+#tamaños de los clusters
+table(pers_subset$Segmentos_kmeans)
+table(pers_subset$Segmentos_kmdeoids)
+table(pers_subset$Segmentos_hclust)
+
+#agrupo por numero de cluster cada tipo
+aggregate(pers_subset[,c(-12,-13)], by = list(pers_subset$Segmentos_kmeans), mean)
+aggregate(pers_subset[,c(-11,-13)], by = list(pers_subset$Segmentos_kmdeoids), mean)
+aggregate(pers_subset[,c(-11,-12)], by = list(pers_subset$Segmentos_hclust), mean)
+
+
+```
+AUTOMATIZACION
+```{r AUTOMATIZACION}
+NUM_CLUSTERS=3
+set.seed(1234)
+years=c(2008:2015)
+kmeans_list=list()
+kmedoids_list=list()
+hclust_list=list()
+for (i in 1:length(years)){
+  sprintf("PROCESANDO: %s",years[i])
+  pers_subset<- subset(pers_subset_dummies,ANIO==years[i])
+  #No necesito la variable año
+  pers_subset$ANIO=NULL
+  #Normalizo los datos
+  pers_subset_scl=scale(pers_subset)
+  #Hay columnas con datos a 0, al normalizar salen NA. Lo vuelvo a poner a 0
+  pers_subset_scl[is.na(pers_subset_scl)] <- 0
+  
+  #KMEANS
+  Modelo_kmeans=kmeans(pers_subset_scl,NUM_CLUSTERS)
+  pers_subset$Segmentos_kmeans=Modelo_kmeans$cluster
+
+  
+  #KMEDOIDS
+  Modelo_kmedoids=pam(pers_subset_scl,NUM_CLUSTERS)
+  pers_subset$Segmentos_kmdeoids=Modelo_kmedoids$cluster
+
+  #HCLUST
+  distancia <- dist(pers_subset_scl, method = "euclidean")
+  Modelo_hclust<- hclust(distancia, method = "complete")
+  pers_subset$Segmentos_hclust = cutree(Modelo_hclust, k = NUM_CLUSTERS)
+  
+  #Incluyo columna con el año
+  pers_subset$YEAR=years[i]
+  
+  #tamaños de los clusters
+  table(pers_subset$Segmentos_kmeans)
+  table(pers_subset$Segmentos_kmdeoids)
+  table(pers_subset$Segmentos_hclust)
+  
+  #guardo en la lista por numero de cluster cada tipo
+
+  kmeans_list[[i]]=aggregate(pers_subset[,c(-12,-13)],
+                                by =list(pers_subset$Segmentos_kmeans), mean)
+  
+  kmedoids_list[[i]]=aggregate(pers_subset[,c(-11,-13)],
+                                  by = list(pers_subset$Segmentos_kmdeoids), mean)
+  
+  hclust_list[[i]]=aggregate(pers_subset[,c(-11,-12)],
+                        by = list(pers_subset$Segmentos_hclust), mean)
+
+}
+
+kmeans_list
+
+kmedoids_list
+
+hclust_list
+
+```
+
