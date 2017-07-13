@@ -1,7 +1,9 @@
 ---
 title: "Análisis_datos_Accidentes_2008_2015"
 author: "Rafael Martínez de Castilla Díez"
-output: 
+output:
+  # md_document:
+  #   variant: markdown_github 
   html_document:
     fig_height: 5
     fig_width: 7
@@ -10,9 +12,10 @@ output:
     toc: yes
     toc_depth: 1
     font-size: 16pt
-  pdf_document:
-    toc:yes
-  word_document: default
+  # pdf_document:
+  #   toc:yes
+  # word_document: default
+always_allow_html: yes
 ---
 <br></br>
 
@@ -29,6 +32,7 @@ En primer lugar incluyo las libreria que se utilizaran en el analisis, fijamos e
 
 ### Librerias y carga de datos
 ```{r Librerias}
+library(knitr)
 library(dummies)
 library(corrplot)
 library(plyr)
@@ -41,7 +45,8 @@ library(plotly)
 library(factoextra)
 library(Matrix)
 library(partykit)
-
+require(markdown) # required for md to html 
+#knit('Analisis_accidentes.Rmd', 'Analisis_accidentes.md') # creates md file
 #install.packages('factoextra',dependencies = TRUE, type="source")
 
 #Directorio de trabajo
@@ -328,7 +333,8 @@ plot_ly(tipos_victimas_anio, x = ~ANIO, y = ~TIPO, z = ~PORC,
          ))
 
 ```
-#### TRABAJANDO CON LAS CIFRAS DEL NUMERO DE ACCIDENTES POR MES
+
+### TRABAJANDO CON LAS CIFRAS DEL NUMERO DE ACCIDENTES POR MES
 
 Por meses: Vemos de nuevo que los años con mayor siniestralidad son 2015,2014 y 2008. El mas con   mayor siniestrlidad y victimas es Julio. En 2015 se aprecia un notable incremento en los meses   de Mayo a Julio.
   2011 y 2012 son los años con numero de accidentes y victimas.
@@ -385,7 +391,7 @@ p1=plot_ly(data = acc_anio_mes, x = ~MES, y = ~NUM_ACC, color = ~ANIO,
 
 p2=plot_ly(data = acc_anio_mes, x = ~MES, y = ~VICTIMAS, color = ~ANIO,
         text = ~paste("ANIO: ",ANIO, '<br>ACCIDENTES:', VICTIMAS)) %>%
-  layout(title = "VICTIMAS POR DIAS 2008-2015")
+  layout(title = "VICTIMAS POR MES 2008-2015")
 
 p3=plot_ly(data = acc_anio_dia, x = ~DIA, y = ~NUM_ACC, color = ~ANIO,
         text = ~paste("ANIO: ",ANIO, '<br>ACCIDENTES:', NUM_ACC)) %>%
@@ -401,7 +407,8 @@ p3
 p4
 
 ```
-#### TRABAJANDO CON LAS CIFRAS DEL NUMERO DE ACCIDENTES Y VICTIMAS POR CCAA
+
+### TRABAJANDO CON LAS CIFRAS DEL NUMERO DE ACCIDENTES Y VICTIMAS POR CCAA
 
 En cuanto al numero de accidentes y victimas por CCAA, Cataluña es la CCAA con mas accidentes, seguidas de Madrid y Andalucia.
 
@@ -504,7 +511,9 @@ p3
 
 
 ```
-#### ARBOL DE CLASIFICACION
+
+
+## ARBOL DE CLASIFICACION 
 
 Voy a intentar identificar que factores influyen mas en que haya muerte o no en un accidente. Para ello, utilizo un arbol de clasificacion.
 

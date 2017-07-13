@@ -1,7 +1,9 @@
 ---
 title: "Análisis_datos_personas_2008_2015"
 author: "Rafael Martínez de Castilla Díez"
-output: 
+output:
+   # md_document:
+  #   variant: markdown_github 
   html_document:
     fig_height: 5
     fig_width: 7
@@ -10,9 +12,10 @@ output:
     toc: yes
     toc_depth: 1
     font-size: 16pt
-  pdf_document:
-    toc:yes
-  word_document: default
+  # pdf_document:
+  #   toc:yes
+  # word_document: default
+always_allow_html: yes
 ---
 <br></br>
 
@@ -129,7 +132,9 @@ pers<-sqldf("select ANIO,
           ANIO_PERMISO,
           INFRACC_VELOCIDAD
           from personas
-          where ID_PERSONA==1 and sexo not in ('X','999') and ANIO_PERMISO <>9999
+          where ID_PERSONA=='CONDUCTOR'
+          and COD_SEXO not in ('SIN ESPECIFICAR','999')
+          and ANIO_PERMISO <>9999
           group by ANIO,EDAD,COD_SEXO,ANIO_PERMISO,INFRACC_VELOCIDAD")
 
 #Codifico los datos de velocidad
@@ -153,7 +158,6 @@ colnames(pers_subset_dummies)=gsub("INFRACC_VELOCIDAD", "", colnames(pers_subset
 Vemos que hay edades de conductores con edades incorrectas <18 y >90, elimino esos registros.
 
 ```{r}
-unique(pers)
 #Elimino los registros comentados
 pers_subset_dummies<- subset(pers_subset_dummies,(EDAD>17 & EDAD<91))
 ```
@@ -161,6 +165,7 @@ pers_subset_dummies<- subset(pers_subset_dummies,(EDAD>17 & EDAD<91))
 Hago el metodo del codo para los tres tipos de cluster y todos los años.
 
 Como muestra solo ejecuto para el 2008
+
 ```{r METODOS DE CODO}
 
 #Para agilizar el procedimiento divido el dataset en años

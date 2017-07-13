@@ -1,7 +1,9 @@
 ---
-title: "Análisis_datos_personas_2008_2015"
+title: "Análisis_datos_vehiculos_2008_2015"
 author: "Rafael Martínez de Castilla Díez"
-output: 
+output:
+   # md_document:
+  #   variant: markdown_github 
   html_document:
     fig_height: 5
     fig_width: 7
@@ -10,9 +12,10 @@ output:
     toc: yes
     toc_depth: 1
     font-size: 16pt
-  pdf_document:
-    toc:yes
-  word_document: default
+  # pdf_document:
+  #   toc:yes
+  # word_document: default
+always_allow_html: yes
 ---
 <br></br>
 
@@ -121,8 +124,5 @@ plot_ly(data = sub_anio, x = ~ANIO, y = ~NUM_ACC, color = ~GRP_EDAD,
   layout(title = "ACCIDENTES POR ANTIGUEDAD 2008-2015")
 
 ```
-### JUNTANDO DATASET DE VEHICULOS CON PERSONAS
-```{r}
-head(vehiculos)
-```
+
 
